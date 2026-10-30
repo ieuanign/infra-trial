@@ -85,6 +85,11 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID }}
         run: |
+          # The chat id, written into the contact point below.
+          if ! [[ $TELEGRAM_CHAT_ID =~ ^(-?[0-9]+|@[A-Za-z0-9_]+)$ ]]; then
+            echo "variable TELEGRAM_CHAT_ID of environment staging is not a Telegram chat id" >&2
+            exit 1
+          fi
           key="$RUNNER_TEMP/staging_key"
           (umask 077 && printf '%s\n' "$SSH_KEY" > "$key")
           trap 'rm -f "$key"' EXIT
@@ -95,10 +100,6 @@ jobs:
           # The deployed commit's tree: the Compose file and every build context it names.
           git archive --format=tar HEAD | remote 'tar -x -f - -C ~'
           # The chat id, written in as a quoted string: see contact-points.yaml.
-          if ! [[ $TELEGRAM_CHAT_ID =~ ^(-?[0-9]+|@[A-Za-z0-9_]+)$ ]]; then
-            echo "variable TELEGRAM_CHAT_ID of environment staging is not a Telegram chat id" >&2
-            exit 1
-          fi
           contact_points=monitoring/grafana/provisioning/alerting/contact-points.yaml
           contents="$(cat "$contact_points")"
           printf '%s\n' "${contents//\"TELEGRAM_CHAT_ID\"/\"$TELEGRAM_CHAT_ID\"}" |
