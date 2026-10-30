@@ -1,4 +1,6 @@
 # One contact point: the Company's bot to the Operator's chat, both values from GitHub environment staging.
+# The deployment writes the chat id in as a quoted string, as it is: Grafana turns any expanded
+# environment variable that reads as a number into one, and rejects a number for chatid.
 apiVersion: 1
 
 contactPoints:
@@ -9,7 +11,7 @@ contactPoints:
         type: telegram
         settings:
           bottoken: $TELEGRAM_BOT_TOKEN
-          chatid: $TELEGRAM_CHAT_ID
+          chatid: "TELEGRAM_CHAT_ID"
 
 policies:
   - orgId: 1

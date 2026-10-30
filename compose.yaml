@@ -1,5 +1,7 @@
 # The services on staging's host, run from the login directory there by the deployment workflow and
 # by tools/*.sh as `ssh staging docker compose ...`. Values from .env, which the deployment writes.
+# Each monitoring service's infra-trial.config label is its configuration's hash, so a change to it
+# recreates the service.
 name: infra-trial
 
 services:
@@ -35,6 +37,8 @@ services:
   prometheus:
     image: prom/prometheus:v3.15.1
     restart: unless-stopped
+    labels:
+      infra-trial.config: ${CONFIG_PROMETHEUS}
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -47,6 +51,8 @@ services:
   loki:
     image: grafana/loki:3.7.9
     restart: unless-stopped
+    labels:
+      infra-trial.config: ${CONFIG_LOKI}
     command:
       - -config.file=/etc/loki/loki.yaml
     volumes:
@@ -56,6 +62,8 @@ services:
   alloy:
     image: grafana/alloy:v1.21.3
     restart: unless-stopped
+    labels:
+      infra-trial.config: ${CONFIG_ALLOY}
     privileged: true
     command:
       - run
@@ -75,6 +83,8 @@ services:
   grafana:
     image: grafana/grafana:13.0.12
     restart: unless-stopped
+    labels:
+      infra-trial.config: ${CONFIG_GRAFANA}
     depends_on:
       - prometheus
       - loki
@@ -82,7 +92,6 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
       GF_USERS_ALLOW_SIGN_UP: "false"
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
     ports:
       - "3000:3000"
     volumes:
