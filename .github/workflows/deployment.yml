@@ -44,6 +44,7 @@ jobs:
       SSH_PORT: ${{ vars.STAGING_SSH_PORT }}
       SSH_USER: ${{ vars.STAGING_SSH_USER }}
       HEALTH_CHECK_URL: ${{ vars.HEALTH_CHECK_URL }}
+      GRAFANA_URL: ${{ vars.GRAFANA_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,11 +60,12 @@ jobs:
             services="$(tools/changed-paths.sh staging | xargs)"
           fi
           echo "services=$services" >> "$GITHUB_OUTPUT"
-          echo "Deploying: ${services:-nothing}"
+          echo "Building: ${services:-nothing}"
+
+      # Every run deploys: the Compose file and the monitoring stack change outside any service's paths.
 
       - name: Deployment
         id: deployment
-        if: steps.services.outputs.services != ''
         env:
           SERVICES: ${{ steps.services.outputs.services }}
         run: |
@@ -76,7 +78,6 @@ jobs:
           gh api -X POST "repos/{owner}/{repo}/deployments/$id/statuses" -f state=in_progress >/dev/null
 
       - name: Deploy
-        if: steps.services.outputs.services != ''
         env:
           SERVICES: ${{ steps.services.outputs.services }}
           SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
@@ -93,22 +94,40 @@ jobs:
           }
           # The deployed commit's tree: the Compose file and every build context it names.
           git archive --format=tar HEAD | remote 'tar -x -f - -C ~'
-          printf 'GRAFANA_ADMIN_PASSWORD=%s\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_CHAT_ID=%s\n' \
-            "$GRAFANA_ADMIN_PASSWORD" "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_CHAT_ID" |
-            remote 'umask 077 && cat > ~/.env'
-          remote docker compose up --detach --build $SERVICES
-          # The proxy and the monitoring stack, started once and kept running.
+          # The chat id, written in as a quoted string: see contact-points.yaml.
+          if ! [[ $TELEGRAM_CHAT_ID =~ ^(-?[0-9]+|@[A-Za-z0-9_]+)$ ]]; then
+            echo "variable TELEGRAM_CHAT_ID of environment staging is not a Telegram chat id" >&2
+            exit 1
+          fi
+          contact_points=monitoring/grafana/provisioning/alerting/contact-points.yaml
+          contents="$(cat "$contact_points")"
+          printf '%s\n' "${contents//\"TELEGRAM_CHAT_ID\"/\"$TELEGRAM_CHAT_ID\"}" |
+            remote "cat > ~/$contact_points"
+          # Each monitoring service's configuration hash, the label that recreates it when it changes.
+          config() { printf '%s\n' "$@" | git hash-object --stdin; }
+          {
+            printf 'GRAFANA_ADMIN_PASSWORD=%s\nTELEGRAM_BOT_TOKEN=%s\n' "$GRAFANA_ADMIN_PASSWORD" "$TELEGRAM_BOT_TOKEN"
+            printf 'CONFIG_PROMETHEUS=%s\n' "$(config "$(git rev-parse HEAD:monitoring/prometheus)")"
+            printf 'CONFIG_LOKI=%s\n' "$(config "$(git rev-parse HEAD:monitoring/loki)")"
+            printf 'CONFIG_ALLOY=%s\n' "$(config "$(git rev-parse HEAD:monitoring/alloy)")"
+            printf 'CONFIG_GRAFANA=%s\n' "$(config "$(git rev-parse HEAD:monitoring/grafana)" "$TELEGRAM_CHAT_ID")"
+          } | remote 'umask 077 && cat > ~/.env'
+          if [ -n "$SERVICES" ]; then
+            remote docker compose up --detach --build $SERVICES
+          fi
+          # The proxy and the monitoring stack, kept running and recreated when their configuration changes.
           remote docker compose up --detach traefik prometheus loki alloy grafana
 
       - name: Health check
-        if: steps.services.outputs.services != ''
         run: |
-          for _ in $(seq 30); do
-            if curl -fsS --max-time 5 "$HEALTH_CHECK_URL"; then exit 0; fi
-            sleep 5
+          for url in "$HEALTH_CHECK_URL" "$GRAFANA_URL/api/health"; do
+            for _ in $(seq 30); do
+              if curl -fsS --max-time 5 "$url"; then continue 2; fi
+              sleep 5
+            done
+            echo "$url did not answer" >&2
+            exit 1
           done
-          echo "$HEALTH_CHECK_URL did not answer" >&2
-          exit 1
 
       - name: Deployment status
         if: always() && steps.deployment.outputs.id != ''
