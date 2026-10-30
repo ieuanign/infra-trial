@@ -1,0 +1,121 @@
+name: Deployment
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: The environment to deploy to.
+        type: choice
+        options: [staging]
+        required: true
+      service:
+        description: The service to deploy; empty deploys every service changed since the last successful Deployment.
+        type: string
+        required: false
+      commit:
+        description: The commit to deploy.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: deployment-staging
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    if: github.event_name == 'push' || inputs.environment == 'staging'
+    # Staging's host listens on this Machine's 127.0.0.1 only, so its own runner deploys it.
+    runs-on: [self-hosted, infra-trial-staging]
+    # The job reads the environment's secrets and variables; the one Deployment is created below.
+    environment:
+      name: staging
+      deployment: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      COMMIT: ${{ inputs.commit || github.sha }}
+      SERVICE: ${{ inputs.service }}
+      SSH_HOST: ${{ vars.STAGING_SSH_HOST }}
+      SSH_PORT: ${{ vars.STAGING_SSH_PORT }}
+      SSH_USER: ${{ vars.STAGING_SSH_USER }}
+      HEALTH_CHECK_URL: ${{ vars.HEALTH_CHECK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.COMMIT }}
+          fetch-depth: 0
+
+      - name: Services
+        id: services
+        run: |
+          if [ -n "$SERVICE" ]; then
+            services="$SERVICE"
+          else
+            services="$(tools/changed-paths.sh staging | xargs)"
+          fi
+          echo "services=$services" >> "$GITHUB_OUTPUT"
+          echo "Deploying: ${services:-nothing}"
+
+      - name: Deployment
+        id: deployment
+        if: steps.services.outputs.services != ''
+        env:
+          SERVICES: ${{ steps.services.outputs.services }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          id="$(jq -n --arg ref "$sha" --arg services "$SERVICES" '{
+              ref: $ref, environment: "staging", auto_merge: false, required_contexts: [],
+              payload: {services: ($services | split(" "))}
+            }' | gh api -X POST "repos/{owner}/{repo}/deployments" --input - --jq .id)"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          gh api -X POST "repos/{owner}/{repo}/deployments/$id/statuses" -f state=in_progress >/dev/null
+
+      - name: Deploy
+        if: steps.services.outputs.services != ''
+        env:
+          SERVICES: ${{ steps.services.outputs.services }}
+          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID }}
+        run: |
+          key="$RUNNER_TEMP/staging_key"
+          (umask 077 && printf '%s\n' "$SSH_KEY" > "$key")
+          trap 'rm -f "$key"' EXIT
+          remote() {
+            ssh -i "$key" -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+              -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" "$SSH_USER@$SSH_HOST" "$@"
+          }
+          # The deployed commit's tree: the Compose file and every build context it names.
+          git archive --format=tar HEAD | remote 'tar -x -f - -C ~'
+          printf 'GRAFANA_ADMIN_PASSWORD=%s\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_CHAT_ID=%s\n' \
+            "$GRAFANA_ADMIN_PASSWORD" "$TELEGRAM_BOT_TOKEN" "$TELEGRAM_CHAT_ID" |
+            remote 'umask 077 && cat > ~/.env'
+          remote docker compose up --detach --build $SERVICES
+          # The proxy and the monitoring stack, started once and kept running.
+          remote docker compose up --detach traefik prometheus loki alloy grafana
+
+      - name: Health check
+        if: steps.services.outputs.services != ''
+        run: |
+          for _ in $(seq 30); do
+            if curl -fsS --max-time 5 "$HEALTH_CHECK_URL"; then exit 0; fi
+            sleep 5
+          done
+          echo "$HEALTH_CHECK_URL did not answer" >&2
+          exit 1
+
+      - name: Deployment status
+        if: always() && steps.deployment.outputs.id != ''
+        env:
+          ID: ${{ steps.deployment.outputs.id }}
+          STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: |
+          gh api -X POST "repos/{owner}/{repo}/deployments/$ID/statuses" \
+            -f state="$STATE" -f environment_url="$HEALTH_CHECK_URL" \
+            -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null
