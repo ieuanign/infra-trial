@@ -1,0 +1,3 @@
+#!/bin/sh
+# Security updates, installed unattended. A reboot they need is a person's: /var/run/reboot-required.
+apt-get update -qq && unattended-upgrade
