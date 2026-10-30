@@ -45,41 +45,14 @@ environments:
       value: "compose"
       mark: suggested
     provider:
-      value: "<the owner names it>"
-      mark: suggested
+      value: "docker"
+      mark: client
     deployed_by:
       value: "trunk-push"
       mark: suggested
     health_check_url:
-      value: "https://<staging's domain>/health"
-      mark: suggested
-    monitoring:
-      value: "added"
-      mark: suggested
-    remediation:
-      enabled:
-        value: false
-        mark: suggested
-    scale:
-      min:
-        value: 1
-        mark: suggested
-      max:
-        value: 2
-        mark: suggested
-  production:
-    runtime:
-      value: "compose"
-      mark: suggested
-    provider:
-      value: "<the owner names it>"
-      mark: suggested
-    deployed_by:
-      value: "named-commit"
-      mark: suggested
-    health_check_url:
-      value: "https://<production's domain>/health"
-      mark: suggested
+      value: "http://127.0.0.1:18080/health"
+      mark: client
     monitoring:
       value: "added"
       mark: suggested
@@ -130,8 +103,8 @@ tools:
     value: null
     mark: suggested
   certificates:
-    value: "acme"
-    mark: suggested
+    value: "none"
+    mark: client
   monitoring:
     value: "prometheus-loki-grafana"
     mark: suggested
@@ -174,21 +147,13 @@ mark: `client` (the owner's own, or observed and kept), `suggested` (the suggest
 ## Environments
 
 - staging, runtime (`environments.staging.runtime`): "compose" — suggested.
-- staging, provider (`environments.staging.provider`): "<the owner names it>" — suggested.
+- staging, provider (`environments.staging.provider`): "docker" — client.
 - staging, deployed by (`environments.staging.deployed_by`): "trunk-push" — suggested.
-- staging, health check (`environments.staging.health_check_url`): "https://<staging's domain>/health" — suggested.
+- staging, health check (`environments.staging.health_check_url`): "http://127.0.0.1:18080/health" — client.
 - staging, monitoring (`environments.staging.monitoring`): "added" — suggested.
 - staging, remediation (`environments.staging.remediation.enabled`): false — suggested.
 - staging, scale minimum (`environments.staging.scale.min`): 1 — suggested.
 - staging, scale maximum (`environments.staging.scale.max`): 2 — suggested.
-- production, runtime (`environments.production.runtime`): "compose" — suggested.
-- production, provider (`environments.production.provider`): "<the owner names it>" — suggested.
-- production, deployed by (`environments.production.deployed_by`): "named-commit" — suggested.
-- production, health check (`environments.production.health_check_url`): "https://<production's domain>/health" — suggested.
-- production, monitoring (`environments.production.monitoring`): "added" — suggested.
-- production, remediation (`environments.production.remediation.enabled`): false — suggested.
-- production, scale minimum (`environments.production.scale.min`): 1 — suggested.
-- production, scale maximum (`environments.production.scale.max`): 2 — suggested.
 
 ## Release
 
@@ -210,7 +175,7 @@ mark: `client` (the owner's own, or observed and kept), `suggested` (the suggest
 
 - Proxy (`tools.proxy`): "traefik" — suggested.
 - Ingress (`tools.ingress`): null — suggested.
-- Certificates (`tools.certificates`): "acme" — suggested.
+- Certificates (`tools.certificates`): "none" — client.
 - Monitoring (`tools.monitoring`): "prometheus-loki-grafana" — suggested.
 - Deployment (`tools.deployment`): null — suggested.
 - Mobile build (`tools.mobile_build`): null — suggested.
