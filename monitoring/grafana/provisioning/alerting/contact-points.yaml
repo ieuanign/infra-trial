@@ -1,0 +1,19 @@
+# One contact point: the Company's bot to the Operator's chat, both values from GitHub environment staging.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: telegram-operator
+    receivers:
+      - uid: telegram-operator
+        type: telegram
+        settings:
+          bottoken: $TELEGRAM_BOT_TOKEN
+          chatid: $TELEGRAM_CHAT_ID
+
+policies:
+  - orgId: 1
+    receiver: telegram-operator
+    group_by:
+      - grafana_folder
+      - alertname

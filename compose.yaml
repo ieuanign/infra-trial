@@ -1,0 +1,96 @@
+# The services on staging's host, run from the login directory there by the deployment workflow and
+# by tools/*.sh as `ssh staging docker compose ...`. Values from .env, which the deployment writes.
+name: infra-trial
+
+services:
+  traefik:
+    image: traefik:v3.7.16
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.metrics.address=:8082
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entrypoint=metrics
+      - --accesslog=true
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  greeter:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.greeter.rule: PathPrefix(`/`)
+      traefik.http.routers.greeter.entrypoints: web
+      traefik.http.services.greeter.loadbalancer.server.port: "8080"
+      traefik.http.services.greeter.loadbalancer.healthcheck.path: /health
+      traefik.http.services.greeter.loadbalancer.healthcheck.interval: 10s
+
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus:/prometheus
+
+  loki:
+    image: grafana/loki:3.7.9
+    restart: unless-stopped
+    command:
+      - -config.file=/etc/loki/loki.yaml
+    volumes:
+      - ./monitoring/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki:/loki
+
+  alloy:
+    image: grafana/alloy:v1.21.3
+    restart: unless-stopped
+    privileged: true
+    command:
+      - run
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    depends_on:
+      - prometheus
+      - loki
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/rootfs:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+
+  grafana:
+    image: grafana/grafana:13.0.12
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana:/var/lib/grafana
+
+volumes:
+  prometheus:
+  loki:
+  grafana:
