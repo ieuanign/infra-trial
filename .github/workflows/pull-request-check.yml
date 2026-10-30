@@ -1,0 +1,32 @@
+name: Pull request check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # A pull request that changes only derived files, or exactly reverts trunk commits, needs no check.
+      - name: Derived files
+        id: derived
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if tools/derived-files.sh "$BASE" "$HEAD"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: make check
+        if: steps.derived.outputs.skip != 'true'
+        run: make check
